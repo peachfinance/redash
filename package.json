@@ -27,7 +27,9 @@
     "test:watch": "jest --watch",
     "cypress": "node client/cypress/cypress.js",
     "preinstall": "cd viz-lib && yarn link --link-folder ../.yarn",
-    "postinstall": "(cd viz-lib && yarn --frozen-lockfile && yarn build:babel) && yarn link --link-folder ./.yarn @redash/viz"
+    "postinstall": "(cd viz-lib && yarn --frozen-lockfile && yarn build:babel) && yarn link --link-folder ./.yarn @redash/viz",
+    "prepare": "yarn run snyk-protect",
+    "snyk-protect": "snyk-protect"
   },
   "repository": {
     "type": "git",
@@ -76,7 +78,8 @@
     "sql-formatter": "git+https://github.com/getredash/sql-formatter.git",
     "universal-router": "^8.3.0",
     "use-debounce": "^3.1.0",
-    "use-media": "^1.4.0"
+    "use-media": "^1.4.0",
+    "@snyk/protect": "latest"
   },
   "devDependencies": {
     "@babel/cli": "^7.10.4",
@@ -193,5 +196,6 @@
     "and_ff >= 64",
     "and_uc >= 11.8",
     "samsung >= 6.2"
-  ]
+  ],
+  "snyk": true
 }
