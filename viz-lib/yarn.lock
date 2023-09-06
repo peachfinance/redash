@@ -6824,10 +6824,10 @@ leaflet-fullscreen@^1.0.2:
   resolved "https://registry.yarnpkg.com/leaflet-fullscreen/-/leaflet-fullscreen-1.0.2.tgz#09c61c4bac45f63b2ee126afd87e5cd97650fc1b"
   integrity sha1-CcYcS6xF9jsu4Sav2H5c2XZQ/Bs=
 
-leaflet.markercluster@^1.1.0:
-  version "1.4.1"
-  resolved "https://registry.yarnpkg.com/leaflet.markercluster/-/leaflet.markercluster-1.4.1.tgz#b53f2c4f2ca7306ddab1dbb6f1861d5e8aa6c5e5"
-  integrity sha512-ZSEpE/EFApR0bJ1w/dUGwTSUvWlpalKqIzkaYdYB7jaftQA/Y2Jav+eT4CMtEYFj+ZK4mswP13Q2acnPBnhGOw==
+leaflet.markercluster@^1.5.3:
+  version "1.5.3"
+  resolved "https://registry.yarnpkg.com/leaflet.markercluster/-/leaflet.markercluster-1.5.3.tgz#9cdb52a4eab92671832e1ef9899669e80efc4056"
+  integrity sha512-vPTw/Bndq7eQHjLBVlWpnGeLa3t+3zGiuM7fJwCkiMFq+nmRuG3RI3f7f4N4TDX7T4NpbAXpR2+NTRSEGfCSeA==
 
 leaflet@^1.2.0:
   version "1.6.0"
