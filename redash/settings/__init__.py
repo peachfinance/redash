@@ -425,6 +425,7 @@ default_destinations = [
     "redash.destinations.pagerduty",
     "redash.destinations.hangoutschat",
     "redash.destinations.microsoft_teams_webhook",
+    "redash.destinations.datadog",
 ]
 
 enabled_destinations = array_from_string(
