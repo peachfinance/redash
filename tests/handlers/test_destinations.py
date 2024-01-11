@@ -1,8 +1,9 @@
-from tests import BaseTestCase
-from mock import patch
+import json
+from unittest import mock
 
-from redash.models import NotificationDestination
-from redash.destinations.slack import Slack
+from redash.destinations.datadog import Datadog
+from redash.models import Alert, NotificationDestination
+from tests import BaseTestCase
 
 
 class TestDestinationListResource(BaseTestCase):
@@ -97,3 +98,63 @@ class TestDestinationResource(BaseTestCase):
         d = NotificationDestination.query.get(d.id)
         self.assertEqual(d.name, data["name"])
         self.assertEqual(d.options["url"], data["options"]["url"])
+
+
+def test_datadog_notify_calls_requests_post():
+    alert = mock.Mock(spec_set=["id", "name", "custom_subject", "custom_body", "render_template"])
+    alert.id = 1
+    alert.name = "Test Alert"
+    alert.custom_subject = "Test custom subject"
+    alert.custom_body = "Test custom body"
+    alert.render_template = mock.Mock(return_value={"Rendered": "template"})
+    query = mock.Mock()
+    query.id = 1
+
+    user = mock.Mock()
+    app = mock.Mock()
+    host = "https://localhost:5000"
+    options = {
+        "api_key": "my-api-key",
+        "tags": "foo:bar,zoo:baz",
+        "priority": "normal",
+        "source_type_name": "postgres",
+    }
+    metadata = {"Scheduled": False}
+    new_state = Alert.TRIGGERED_STATE
+    destination = Datadog(options)
+
+    with mock.patch("redash.destinations.datadog.requests.post") as mock_post:
+        mock_response = mock.Mock()
+        mock_response.status_code = 202
+        mock_post.return_value = mock_response
+
+        destination.notify(alert, query, user, new_state, app, host, metadata, options)
+
+        expected_payload = {
+            "title": "Test custom subject",
+            "text": "Test custom body\nQuery: https://localhost:5000/queries/1\nAlert: https://localhost:5000/alerts/1",
+            "alert_type": "error",
+            "priority": "normal",
+            "source_type_name": "postgres",
+            "aggregation_key": "redash:https://localhost:5000/alerts/1",
+            "tags": [
+                "foo:bar",
+                "zoo:baz",
+                "redash",
+                "query_id:1",
+                "alert_id:1",
+            ],
+        }
+
+        mock_post.assert_called_once_with(
+            "https://api.datadoghq.com/api/v1/events",
+            data=json.dumps(expected_payload),
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "DD-API-KEY": "my-api-key",
+            },
+            timeout=5.0,
+        )
+
+        assert mock_response.status_code == 202
