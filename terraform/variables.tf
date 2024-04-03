@@ -15,7 +15,8 @@ variable "region" {
 
 variable "env" {
   type        = string
-  description = "The environment the terraform resources will be used in."
+  description = "By default the env name is the project_name. Use this to override"
+  default     = ""
 }
 
 variable "private_network" {
