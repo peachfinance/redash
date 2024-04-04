@@ -5,8 +5,7 @@ resource "google_sql_database_instance" "redash-external" {
   instance_type        = "CLOUD_SQL_INSTANCE"
   master_instance_name = null
   name                 = "redash-external"
-  project              = var.project_name
-  region               = var.region
+
   settings {
     activation_policy           = "ALWAYS"
     availability_type           = "REGIONAL"
@@ -68,8 +67,7 @@ resource "google_sql_database_instance" "redash-internal" {
   instance_type        = "CLOUD_SQL_INSTANCE"
   master_instance_name = null
   name                 = "redash-internal"
-  project              = var.project_name
-  region               = var.region
+
   settings {
     activation_policy           = "ALWAYS"
     availability_type           = "REGIONAL"

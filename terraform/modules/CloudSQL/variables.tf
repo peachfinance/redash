@@ -1,17 +1,7 @@
-variable "project_name" {
-  description = "The name of the project"
-  type        = string
-}
-
-variable "region" {
-  description = "Main region for project"
-  type        = string
-  default     = "US-Central-1"
-}
-
 variable "env" {
   type        = string
-  description = "The environment the terraform resources will be used in."
+  description = "By default the env name is the project_id. Use this to override"
+  default     = ""
 }
 
 variable "private_network" {

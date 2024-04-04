@@ -1,9 +1,9 @@
 locals {
-  env = var.env != "" ? var.env : var.project_name
+  env = var.env != "" ? var.env : var.project_id
 }
 
-variable "project_name" {
-  description = "The name of the project"
+variable "project_id" {
+  description = "The short id of the project"
   type        = string
 }
 
@@ -15,7 +15,7 @@ variable "region" {
 
 variable "env" {
   type        = string
-  description = "By default the env name is the project_name. Use this to override"
+  description = "By default the env name is the project_id. Use this to override"
   default     = ""
 }
 
