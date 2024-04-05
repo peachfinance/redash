@@ -10,13 +10,13 @@ variable "project_id" {
 variable "region" {
   description = "Main region for project"
   type        = string
-  default     = "US-Central-1"
+  default     = "us-central-1"
 }
 
 variable "env" {
   type        = string
-  description = "By default the env name is the project_id. Use this to override"
-  default     = ""
+  description = "The environment the terraform resources will be used in."
+  default     = "dev"
 }
 
 variable "private_network" {

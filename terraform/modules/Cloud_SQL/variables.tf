@@ -1,7 +1,7 @@
 variable "env" {
   type        = string
-  description = "By default the env name is the project_id. Use this to override"
-  default     = ""
+  description = "The environment the terraform resources will be used in."
+  default     = "dev"
 }
 
 variable "private_network" {
