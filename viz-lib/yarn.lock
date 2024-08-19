@@ -7646,10 +7646,10 @@ react-is@^17.0.1:
   resolved "https://registry.yarnpkg.com/react-is/-/react-is-17.0.1.tgz#5b3531bd76a645a4c9fb6e693ed36419e3301339"
   integrity sha512-NAnt2iGDXohE5LI7uBnLnqvLQMtzhkiAOLXTmv+qnF9Ky7xAPcX8Up/xWIhxvLVGJvuLiNc4xQLtuqDRzb4fSA==
 
-react-pivottable@^0.9.0:
-  version "0.9.0"
-  resolved "https://registry.yarnpkg.com/react-pivottable/-/react-pivottable-0.9.0.tgz#f50ea2334dbbdd1c078f5a402f7c33b7c6dff907"
-  integrity sha512-fs1pGV5z4BvOXL4iLu79kKCLgR5XINW2ZredJHoPqXEMbJaIv50Eoec1XowWf3i3Dvdb8EYgvNqlF2ggC4GJOw==
+react-pivottable@^0.11.0:
+  version "0.11.0"
+  resolved "https://registry.yarnpkg.com/react-pivottable/-/react-pivottable-0.11.0.tgz#2ac9a28db6bdcefdb7bdeeb1ed067df229bb9dd8"
+  integrity sha512-hFU10XYL28NWVRnm+RRyHrzsAn/xIJzPgwPebUE2Hx5JZQl/Zxty3WUL/5cAcdK4AmTb9FQBRopLKLwuiI6VlA==
   dependencies:
     immutability-helper "^2.3.1"
     prop-types "^15.5.10"
