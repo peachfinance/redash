@@ -1,4 +1,4 @@
-FROM node:14.17 as frontend-builder
+FROM node:14.21.3 as frontend-builder
 
 RUN npm install --global --force yarn@1.22.10
 
@@ -25,7 +25,7 @@ COPY --chown=redash client /frontend/client
 COPY --chown=redash webpack.config.js /frontend/
 RUN if [ "x$skip_frontend_build" = "x" ] ; then yarn build; else mkdir -p /frontend/client/dist && touch /frontend/client/dist/multi_org.html && touch /frontend/client/dist/index.html; fi
 
-FROM python:3.7-slim-buster
+FROM python:3.8.18-slim
 
 EXPOSE 5000
 
@@ -67,9 +67,9 @@ ARG TARGETPLATFORM
 ARG databricks_odbc_driver_url=https://databricks.com/wp-content/uploads/2.6.10.1010-2/SimbaSparkODBC-2.6.10.1010-2-Debian-64bit.zip
 RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
   curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
-  && curl https://packages.microsoft.com/config/debian/10/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+  && curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list \
   && apt-get update \
-  && ACCEPT_EULA=Y apt-get install  -y --no-install-recommends msodbcsql17 \
+  && ACCEPT_EULA=Y apt-get install  -y --no-install-recommends msodbcsql18 \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* \
   && curl "$databricks_odbc_driver_url" --location --output /tmp/simba_odbc.zip \
