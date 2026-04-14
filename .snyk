@@ -3,3 +3,4 @@ version: v1.25.0
 exclude:
   global:
     - ".claude/worktrees/**"
+    - ".terraform/modules/**"
