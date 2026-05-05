@@ -1,5 +1,13 @@
 # Snyk (https://snyk.io) policy file
 version: v1.25.0
+ignore:
+  SNYK-PYTHON-WERKZEUG-6808933:
+    - '*':
+        reason: >
+          Fix requires Werkzeug >=3.0.3, which is incompatible with Flask 2.3.x
+          (Flask 3.0 is required for Werkzeug 3.x). The vulnerability affects only the
+          interactive debugger console, which is disabled in production (FLASK_ENV != development).
+        expires: 2026-11-01T00:00:00.000Z
 exclude:
   global:
     - ".claude/worktrees/**"
