@@ -21,6 +21,7 @@ function prepareXAxis(axisOptions: any, additionalOptions: any) {
     title: getAxisTitle(axisOptions),
     type: getAxisScaleType(axisOptions),
     automargin: true,
+    tickformat: axisOptions.tickFormat ?? null,
   };
 
   if (additionalOptions.sortX && axis.type === "category") {
@@ -48,6 +49,7 @@ function prepareYAxis(axisOptions: any) {
     automargin: true,
     autorange: true,
     range: null,
+    tickformat: axisOptions.tickFormat ?? null,
   };
 }
 
@@ -61,10 +63,8 @@ function preparePieLayout(layout: any, options: any, data: any) {
   } else {
     layout.annotations = filter(
       map(data, (series, index) => {
-        // @ts-expect-error ts-migrate(2362) FIXME: The left-hand side of an arithmetic operation must... Remove this comment to see the full error message
-        const xPosition = (index % cellsInRow) * cellWidth;
-        // @ts-expect-error ts-migrate(2362) FIXME: The left-hand side of an arithmetic operation must... Remove this comment to see the full error message
-        const yPosition = Math.floor(index / cellsInRow) * cellHeight;
+        const xPosition = ((index as number) % cellsInRow) * cellWidth;
+        const yPosition = Math.floor((index as number) / cellsInRow) * cellHeight;
         return {
           x: xPosition + (cellWidth - xPadding) / 2,
           y: yPosition + cellHeight - 0.015,
@@ -107,7 +107,7 @@ function prepareBoxLayout(layout: any, options: any, data: any) {
 }
 
 export default function prepareLayout(element: any, options: any, data: any) {
-  const layout = {
+  const layout: any = {
     margin: { l: 10, r: 10, b: 5, t: 20, pad: 4 },
     // plot size should be at least 5x5px
     width: Math.max(5, Math.floor(element.offsetWidth)),
@@ -121,6 +121,10 @@ export default function prepareLayout(element: any, options: any, data: any) {
       namelength: -1,
     },
   };
+
+  if (["line", "area", "column"].includes(options.globalSeriesType)) {
+    layout.hovermode = options.swappedAxes ? 'y' : 'x';
+  }
 
   switch (options.globalSeriesType) {
     case "pie":

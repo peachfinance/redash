@@ -1,7 +1,6 @@
-import os
 import logging
+import os
 import select
-from contextlib import contextmanager
 from base64 import b64decode
 from tempfile import NamedTemporaryFile
 from uuid import uuid4
@@ -9,8 +8,18 @@ from uuid import uuid4
 import psycopg2
 from psycopg2.extras import Range
 
-from redash.query_runner import *
-from redash.utils import JSONEncoder, json_dumps, json_loads
+from redash.query_runner import (
+    TYPE_BOOLEAN,
+    TYPE_DATE,
+    TYPE_DATETIME,
+    TYPE_FLOAT,
+    TYPE_INTEGER,
+    TYPE_STRING,
+    BaseSQLQueryRunner,
+    InterruptException,
+    JobTimeoutException,
+    register,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,28 +39,20 @@ types_map = {
     701: TYPE_FLOAT,
     16: TYPE_BOOLEAN,
     1082: TYPE_DATE,
+    1182: TYPE_DATE,
     1114: TYPE_DATETIME,
     1184: TYPE_DATETIME,
+    1115: TYPE_DATETIME,
+    1185: TYPE_DATETIME,
     1014: TYPE_STRING,
     1015: TYPE_STRING,
     1008: TYPE_STRING,
     1009: TYPE_STRING,
     2951: TYPE_STRING,
+    1043: TYPE_STRING,
+    1002: TYPE_STRING,
+    1003: TYPE_STRING,
 }
-
-
-class PostgreSQLJSONEncoder(JSONEncoder):
-    def default(self, o):
-        if isinstance(o, Range):
-            # From: https://github.com/psycopg/psycopg2/pull/779
-            if o._bounds is None:
-                return ""
-
-            items = [o._bounds[0], str(o._lower), ", ", str(o._upper), o._bounds[1]]
-
-            return "".join(items)
-
-        return super(PostgreSQLJSONEncoder, self).default(o)
 
 
 def _wait(conn, timeout=None):
@@ -137,6 +138,15 @@ def _get_ssl_config(configuration):
     return ssl_config
 
 
+def _parse_dsn(configuration):
+    standard_params = {"user", "password", "host", "port", "dbname"}
+    params = psycopg2.extensions.parse_dsn(configuration.get("dsn", ""))
+    overlap = standard_params.intersection(params.keys())
+    if overlap:
+        raise ValueError("Extra parameters may not contain {}".format(overlap))
+    return params
+
+
 class PostgreSQL(BaseSQLQueryRunner):
     noop_query = "SELECT 1"
 
@@ -150,6 +160,7 @@ class PostgreSQL(BaseSQLQueryRunner):
                 "host": {"type": "string", "default": "127.0.0.1"},
                 "port": {"type": "number", "default": 5432},
                 "dbname": {"type": "string", "title": "Database Name"},
+                "dsn": {"type": "string", "default": "application_name=redash", "title": "Parameters"},
                 "sslmode": {
                     "type": "string",
                     "title": "SSL Mode",
@@ -182,36 +193,37 @@ class PostgreSQL(BaseSQLQueryRunner):
     def type(cls):
         return "pg"
 
+    @classmethod
+    def custom_json_encoder(cls, dec, o):
+        if isinstance(o, Range):
+            # From: https://github.com/psycopg/psycopg2/pull/779
+            if o._bounds is None:
+                return ""
+
+            items = [o._bounds[0], str(o._lower), ", ", str(o._upper), o._bounds[1]]
+
+            return "".join(items)
+        return None
+
     def _get_definitions(self, schema, query):
         results, error = self.run_query(query, None)
 
         if error is not None:
             self._handle_run_query_error(error)
 
-        results = json_loads(results)
-
         build_schema(results, schema)
 
     def _get_tables(self, schema):
         """
-        relkind constants per https://www.postgresql.org/docs/10/static/catalog-pg-class.html
-        r = regular table
-        v = view
+        relkind constants from https://www.postgresql.org/docs/current/catalog-pg-class.html
         m = materialized view
-        f = foreign table
-        p = partitioned table (new in 10)
-        ---
-        i = index
-        S = sequence
-        t = TOAST table
-        c = composite type
         """
 
         query = """
-        SELECT s.nspname as table_schema,
-               c.relname as table_name,
-               a.attname as column_name,
-               null as data_type
+        SELECT s.nspname AS table_schema,
+               c.relname AS table_name,
+               a.attname AS column_name,
+               NULL AS data_type
         FROM pg_class c
         JOIN pg_namespace s
         ON c.relnamespace = s.oid
@@ -220,7 +232,9 @@ class PostgreSQL(BaseSQLQueryRunner):
         ON a.attrelid = c.oid
         AND a.attnum > 0
         AND NOT a.attisdropped
-        WHERE c.relkind IN ('m', 'f', 'p')
+        WHERE c.relkind = 'm'
+        AND has_table_privilege(quote_ident(s.nspname) || '.' || quote_ident(c.relname), 'select')
+        AND has_schema_privilege(s.nspname, 'usage')
 
         UNION
 
@@ -230,6 +244,8 @@ class PostgreSQL(BaseSQLQueryRunner):
                data_type
         FROM information_schema.columns
         WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+        AND has_table_privilege(quote_ident(table_schema) || '.' || quote_ident(table_name), 'select')
+        AND has_schema_privilege(table_schema, 'usage')
         """
 
         self._get_definitions(schema, query)
@@ -238,6 +254,7 @@ class PostgreSQL(BaseSQLQueryRunner):
 
     def _get_connection(self):
         self.ssl_config = _get_ssl_config(self.configuration)
+        self.dsn = _parse_dsn(self.configuration)
         connection = psycopg2.connect(
             user=self.configuration.get("user"),
             password=self.configuration.get("password"),
@@ -246,6 +263,7 @@ class PostgreSQL(BaseSQLQueryRunner):
             dbname=self.configuration.get("dbname"),
             async_=True,
             **self.ssl_config,
+            **self.dsn,
         )
 
         return connection
@@ -261,26 +279,20 @@ class PostgreSQL(BaseSQLQueryRunner):
             _wait(connection)
 
             if cursor.description is not None:
-                columns = self.fetch_columns(
-                    [(i[0], types_map.get(i[1], None)) for i in cursor.description]
-                )
-                rows = [
-                    dict(zip((column["name"] for column in columns), row))
-                    for row in cursor
-                ]
+                columns = self.fetch_columns([(i[0], types_map.get(i[1], None)) for i in cursor.description])
+                rows = [dict(zip((column["name"] for column in columns), row)) for row in cursor]
 
                 data = {"columns": columns, "rows": rows}
                 error = None
-                json_data = json_dumps(data, ignore_nan=True, cls=PostgreSQLJSONEncoder)
             else:
                 error = "Query completed but it returned no data."
-                json_data = None
-        except (select.error, OSError) as e:
+                data = None
+        except (select.error, OSError):
             error = "Query interrupted. Please retry."
-            json_data = None
+            data = None
         except psycopg2.DatabaseError as e:
             error = str(e)
-            json_data = None
+            data = None
         except (KeyboardInterrupt, InterruptException, JobTimeoutException):
             connection.cancel()
             raise
@@ -288,7 +300,7 @@ class PostgreSQL(BaseSQLQueryRunner):
             connection.close()
             _cleanup_ssl_certs(self.ssl_config)
 
-        return json_data, error
+        return data, error
 
 
 class Redshift(PostgreSQL):
@@ -303,9 +315,7 @@ class Redshift(PostgreSQL):
     def _get_connection(self):
         self.ssl_config = {}
 
-        sslrootcert_path = os.path.join(
-            os.path.dirname(__file__), "./files/redshift-ca-bundle.crt"
-        )
+        sslrootcert_path = os.path.join(os.path.dirname(__file__), "./files/redshift-ca-bundle.crt")
 
         connection = psycopg2.connect(
             user=self.configuration.get("user"),
@@ -383,12 +393,13 @@ class Redshift(PostgreSQL):
             SELECT DISTINCT table_name,
                             table_schema,
                             column_name,
+                            data_type,
                             ordinal_position AS pos
             FROM svv_columns
             WHERE table_schema NOT IN ('pg_internal','pg_catalog','information_schema')
             AND table_schema NOT LIKE 'pg_temp_%'
         )
-        SELECT table_name, table_schema, column_name
+        SELECT table_name, table_schema, column_name, data_type
         FROM tables
         WHERE
             HAS_SCHEMA_PRIVILEGE(table_schema, 'USAGE') AND
@@ -419,15 +430,11 @@ class RedshiftIAM(Redshift):
 
     def _login_method_selection(self):
         if self.configuration.get("rolename"):
-            if not self.configuration.get(
-                "aws_access_key_id"
-            ) or not self.configuration.get("aws_secret_access_key"):
+            if not self.configuration.get("aws_access_key_id") or not self.configuration.get("aws_secret_access_key"):
                 return "ASSUME_ROLE_NO_KEYS"
             else:
                 return "ASSUME_ROLE_KEYS"
-        elif self.configuration.get("aws_access_key_id") and self.configuration.get(
-            "aws_secret_access_key"
-        ):
+        elif self.configuration.get("aws_access_key_id") and self.configuration.get("aws_secret_access_key"):
             return "KEYS"
         elif not self.configuration.get("password"):
             return "ROLE"
@@ -480,10 +487,9 @@ class RedshiftIAM(Redshift):
         }
 
     def _get_connection(self):
+        self.ssl_config = {}
 
-        sslrootcert_path = os.path.join(
-            os.path.dirname(__file__), "./files/redshift-ca-bundle.crt"
-        )
+        sslrootcert_path = os.path.join(os.path.dirname(__file__), "./files/redshift-ca-bundle.crt")
 
         login_method = self._login_method_selection()
 
@@ -495,23 +501,17 @@ class RedshiftIAM(Redshift):
                 aws_secret_access_key=self.configuration.get("aws_secret_access_key"),
             )
         elif login_method == "ROLE":
-            client = boto3.client(
-                "redshift", region_name=self.configuration.get("aws_region")
-            )
+            client = boto3.client("redshift", region_name=self.configuration.get("aws_region"))
         else:
             if login_method == "ASSUME_ROLE_KEYS":
                 assume_client = client = boto3.client(
                     "sts",
                     region_name=self.configuration.get("aws_region"),
                     aws_access_key_id=self.configuration.get("aws_access_key_id"),
-                    aws_secret_access_key=self.configuration.get(
-                        "aws_secret_access_key"
-                    ),
+                    aws_secret_access_key=self.configuration.get("aws_secret_access_key"),
                 )
             else:
-                assume_client = client = boto3.client(
-                    "sts", region_name=self.configuration.get("aws_region")
-                )
+                assume_client = client = boto3.client("sts", region_name=self.configuration.get("aws_region"))
             role_session = f"redash_{uuid4().hex}"
             session_keys = assume_client.assume_role(
                 RoleArn=self.configuration.get("rolename"), RoleSessionName=role_session

@@ -2,7 +2,7 @@ import { isString, isObject, isFinite, isNumber, merge } from "lodash";
 import React from "react";
 import { useDebouncedCallback } from "use-debounce";
 import * as Grid from "antd/lib/grid";
-import { Section, Select, Input, InputNumber } from "@/components/visualizations/editor";
+import { Section, Select, Input, InputNumber, ContextHelp } from "@/components/visualizations/editor";
 
 function toNumber(value: any) {
   value = isNumber(value) ? value : parseFloat(value);
@@ -18,6 +18,7 @@ type OwnProps = {
     };
     rangeMin?: number;
     rangeMax?: number;
+    tickFormat?: string;
   };
   features?: {
     autoDetectType?: boolean;
@@ -26,7 +27,12 @@ type OwnProps = {
   onChange?: (...args: any[]) => any;
 };
 
-type Props = OwnProps & typeof AxisSettings.defaultProps;
+const axisSettingsDefaultProps = {
+  features: {},
+  onChange: () => {},
+};
+
+type Props = OwnProps & typeof axisSettingsDefaultProps;
 
 export default function AxisSettings({ id, options, features, onChange }: Props) {
   function optionsChanged(newOptions: any) {
@@ -39,6 +45,8 @@ export default function AxisSettings({ id, options, features, onChange }: Props)
   }, 200);
 
   const [handleMinMaxChange] = useDebouncedCallback(opts => optionsChanged(opts), 200);
+
+  const [handleTickFormatChange] = useDebouncedCallback(opts => optionsChanged(opts), 200);
 
   return (
     <React.Fragment>
@@ -89,6 +97,21 @@ export default function AxisSettings({ id, options, features, onChange }: Props)
         />
       </Section>
 
+      {/* @ts-expect-error ts-migrate(2745) FIXME: This JSX tag's 'children' prop expects type 'never... Remove this comment to see the full error message */}
+      <Section>
+        <Input
+          label={
+            <React.Fragment>
+              Tick Format
+              <ContextHelp.TickFormatSpecs />
+            </React.Fragment>
+          }
+          data-test={`Chart.${id}.TickFormat`}
+          defaultValue={options.tickFormat}
+          onChange={(event: any) => handleTickFormatChange({ tickFormat: event.target.value })}
+        />
+      </Section>
+
       {features.range && (
         // @ts-expect-error ts-migrate(2745) FIXME: This JSX tag's 'children' prop expects type 'never... Remove this comment to see the full error message
         <Section>
@@ -119,7 +142,4 @@ export default function AxisSettings({ id, options, features, onChange }: Props)
   );
 }
 
-AxisSettings.defaultProps = {
-  features: {},
-  onChange: () => {},
-};
+AxisSettings.defaultProps = axisSettingsDefaultProps;

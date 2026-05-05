@@ -15,7 +15,7 @@ function mount(options: any, done: any) {
       visualizationName="Test"
       data={{ columns: [], rows: [] }}
       options={options}
-      onOptionsChange={changedOptions => {
+      onOptionsChange={(changedOptions: any) => {
         expect(changedOptions).toMatchSnapshot();
         done();
       }}
@@ -53,6 +53,20 @@ describe("Visualizations -> Chart -> Editor -> X-Axis Settings", () => {
     findByTestID(el, "Chart.XAxis.Name")
       .last()
       .simulate("change", { target: { value: "test" } });
+  });
+
+  test("Changes axis tick format", done => {
+    const el = mount(
+      {
+        globalSeriesType: "column",
+        xAxis: { },
+      },
+      done
+    );
+
+    findByTestID(el, "Chart.XAxis.TickFormat")
+      .last()
+      .simulate("change", { target: { value: "%B" } });
   });
 
   test("Sets Show Labels option", done => {

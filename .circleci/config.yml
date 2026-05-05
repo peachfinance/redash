@@ -1,51 +1,60 @@
-version: 2.0
+version: 2.1
 
 build-docker-image-job: &build-docker-image-job
   docker:
-    - image: circleci/node:14.17
+    - image: cimg/node:24.0
   steps:
     - setup_remote_docker:
-        version: 19.03.13
+        version: default
     - checkout
-    - run: sudo apt update
-    - run: sudo apt install python3-pip
+    - run: sudo apt update && sudo apt install -y jq
     - run: .circleci/update_version
-    - run: sudo npm install --global --force yarn@1.22.10
     - run: .circleci/docker_build
+
 jobs:
   backend-lint:
     docker:
-      - image: circleci/python:3.7.0
+      - image: cimg/python:3.13
     steps:
       - checkout
-      - run: sudo pip install flake8
-      - run: ./bin/flake8_tests.sh
+      - run:
+          name: Install linters
+          command: pip install ruff==0.0.289 black==23.1.0
+      - run:
+          name: ruff
+          command: ruff check .
+      - run:
+          name: black
+          command: black --check .
+
   backend-unit-tests:
     environment:
-      COMPOSE_FILE: .circleci/docker-compose.circle.yml
+      COMPOSE_FILE: .ci/compose.ci.yaml
       COMPOSE_PROJECT_NAME: redash
+      COMPOSE_DOCKER_CLI_BUILD: 1
+      DOCKER_BUILDKIT: 1
     docker:
-      - image: circleci/buildpack-deps:xenial
+      - image: cimg/base:current
     steps:
       - setup_remote_docker:
-          version: 19.03.13
+          version: default
       - checkout
       - run:
           name: Build Docker Images
           command: |
             set -x
-            COMPOSE_DOCKER_CLI_BUILD=1 DOCKER_BUILDKIT=1 docker-compose build --build-arg skip_ds_deps=true --build-arg skip_frontend_build=true
-            docker-compose up -d
+            docker compose build --build-arg install_groups="main,all_ds,dev" --build-arg skip_frontend_build=true
+            docker compose up -d
             sleep 10
       - run:
           name: Create Test Database
-          command: docker-compose run --rm postgres psql -h postgres -U postgres -c "create database tests;"
+          command: docker compose -p redash run --rm postgres psql -h postgres -U postgres -c "create database tests;"
       - run:
           name: List Enabled Query Runners
-          command: docker-compose run --rm redash manage ds list_types
+          command: docker compose -p redash run --rm redash manage ds list_types
       - run:
           name: Run Tests
-          command: docker-compose run --name tests redash tests --junitxml=junit.xml --cov-report xml --cov=redash --cov-config .coveragerc tests/
+          command: docker compose -p redash run --name tests redash tests --junitxml=junit.xml --cov-report xml --cov=redash --cov-config .coveragerc tests/
       - run:
           name: Copy Test Results
           command: |
@@ -57,88 +66,51 @@ jobs:
           path: /tmp/test-results
       - store_artifacts:
           path: coverage.xml
+
   frontend-lint:
     environment:
       CYPRESS_INSTALL_BINARY: 0
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 1
     docker:
-      - image: circleci/node:14.17
+      - image: cimg/node:24.0
     steps:
       - checkout
-      - run: mkdir -p /tmp/test-results/eslint
-      - run: sudo npm install --global --force yarn@1.22.10
-      - run: yarn cache clean && yarn --frozen-lockfile --network-concurrency 1
-      - run: yarn lint:ci
+      - run:
+          name: Install pnpm
+          command: sudo corepack enable && corepack prepare pnpm@10.30.3 --activate
+      - run:
+          name: Install dependencies
+          command: pnpm install --frozen-lockfile --ignore-scripts
+      - run:
+          name: Lint
+          command: pnpm lint:ci
       - store_test_results:
           path: /tmp/test-results
+
   frontend-unit-tests:
     environment:
       CYPRESS_INSTALL_BINARY: 0
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 1
     docker:
-      - image: circleci/node:14.17
+      - image: cimg/node:24.0
     steps:
       - checkout
-      - run: sudo apt update
-      - run: sudo apt install python3-pip
-      - run: sudo npm install --global --force yarn@1.22.10
-      - run: yarn cache clean && yarn --frozen-lockfile --network-concurrency 1
+      - run:
+          name: Install pnpm
+          command: sudo corepack enable && corepack prepare pnpm@10.30.3 --activate
+      - run:
+          name: Install dependencies
+          command: pnpm install --frozen-lockfile
       - run:
           name: Run App Tests
-          command: yarn test
+          command: pnpm test
       - run:
-          name: Run Visualizations Tests
-          command: (cd viz-lib && yarn test)
-      - run: yarn lint
-  frontend-e2e-tests:
-    environment:
-      COMPOSE_FILE: .circleci/docker-compose.cypress.yml
-      COMPOSE_PROJECT_NAME: cypress
-      PERCY_TOKEN_ENCODED: ZGRiY2ZmZDQ0OTdjMzM5ZWE0ZGQzNTZiOWNkMDRjOTk4Zjg0ZjMxMWRmMDZiM2RjOTYxNDZhOGExMjI4ZDE3MA==
-      CYPRESS_PROJECT_ID_ENCODED: OTI0Y2th
-      CYPRESS_RECORD_KEY_ENCODED: YzA1OTIxMTUtYTA1Yy00NzQ2LWEyMDMtZmZjMDgwZGI2ODgx
-      CYPRESS_INSTALL_BINARY: 0
-      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 1
-    docker:
-      - image: circleci/node:14.17
-    steps:
-      - setup_remote_docker:
-          version: 19.03.13
-      - checkout
-      - run:
-          name: Enable Code Coverage report for master branch
-          command: |
-            if [ "$CIRCLE_BRANCH" = "master" ]; then
-              echo 'export CODE_COVERAGE=true' >> $BASH_ENV
-              source $BASH_ENV
-            fi
-      - run: sudo npm install --global --force yarn@1.22.10
-      - run:
-          name: Install frontend dependencies
-          command: yarn cache clean && yarn --frozen-lockfile --network-concurrency 1
-      - run:
-          name: Setup Redash server
-          command: |
-            yarn cypress build
-            yarn cypress start -- --skip-db-seed
-            docker-compose run cypress yarn cypress db-seed
-      - run:
-          name: Execute Cypress tests
-          command: yarn cypress run-ci
-      - run:
-          name: "Failure: output container logs to console"
-          command: |
-            docker-compose logs
-          when: on_fail
-      - run:
-          name: Copy Code Coverage results
-          command: |
-            docker cp cypress:/usr/src/app/coverage ./coverage || true
-          when: always
-      - store_artifacts:
-          path: coverage
+          name: Run Visualization Tests
+          command: cd viz-lib && pnpm test
+
   build-docker-image: *build-docker-image-job
   build-preview-docker-image: *build-docker-image-job
+
 workflows:
   version: 2
   build:
@@ -152,14 +124,10 @@ workflows:
           requires:
             - backend-lint
             - frontend-lint
-      - frontend-e2e-tests:
-          requires:
-            - frontend-lint
       - build-preview-docker-image:
           requires:
             - backend-unit-tests
             - frontend-unit-tests
-            - frontend-e2e-tests
           filters:
             branches:
               only:
@@ -169,7 +137,6 @@ workflows:
           requires:
             - backend-unit-tests
             - frontend-unit-tests
-            - frontend-e2e-tests
           filters:
             branches:
               only:

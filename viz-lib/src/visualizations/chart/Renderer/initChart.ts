@@ -1,6 +1,12 @@
-import { isArray, isObject, isString, isFunction, startsWith, reduce, merge, map, each } from "lodash";
+import { isArray, isObject, isString, isFunction, startsWith, reduce, merge, map, each, isNil } from "lodash";
 import resizeObserver from "@/services/resizeObserver";
 import { Plotly, prepareData, prepareLayout, updateData, updateAxes, updateChartSize } from "../plotly";
+import { formatSimpleTemplate } from "@/lib/value-format";
+
+const navigateToUrl = (url: string, shouldOpenNewTab: boolean = true) =>
+  shouldOpenNewTab
+    ? window.open(url, "_blank")
+    : window.location.href = url;
 
 function createErrorHandler(errorHandler: any) {
   return (error: any) => {
@@ -30,8 +36,7 @@ function initPlotUpdater() {
       }
       return updater;
     },
-    // @ts-expect-error ts-migrate(7023) FIXME: 'process' implicitly has return type 'any' because... Remove this comment to see the full error message
-    process(plotlyElement: any) {
+    process(plotlyElement: any): Promise<void> {
       if (actions.length > 0) {
         const updates = reduce(actions, (updates, action) => merge(updates, action[0]), {});
         const handlers = map(actions, action => (isFunction(action[1]) ? action[1] : () => null));
@@ -110,6 +115,28 @@ export default function initChart(container: any, options: any, data: any, addit
         );
         options.onHover && container.on("plotly_hover", options.onHover);
         options.onUnHover && container.on("plotly_unhover", options.onUnHover);
+        container.on('plotly_click',
+          createSafeFunction((data: any) => {
+            if (options.enableLink === true) {
+              try {
+                var templateValues: { [k: string]: any } = {}
+                data.points.forEach((point: any, i: number) => {
+                  var sourceDataElement = [...point.data?.sourceData?.entries()][point.pointNumber ?? 0]?.[1]?.row ?? {};
+
+                  if (isNil(templateValues['@@x'])) templateValues['@@x'] = sourceDataElement.x;
+                  if (isNil(templateValues['@@y'])) templateValues['@@y'] = sourceDataElement.y;
+
+                  templateValues[`@@y${i + 1}`] = sourceDataElement.y;
+                  templateValues[`@@x${i + 1}`] = sourceDataElement.x;
+                })
+                navigateToUrl(
+                  formatSimpleTemplate(options.linkFormat, templateValues).replace(/{{\s*([^\s]+?)\s*}}/g, () => ''),
+                  options.linkOpenNewTab);
+              } catch (error) {
+                console.error('Click error: [%s]', error.message, { error });
+              }
+            }
+          }));
 
         unwatchResize = resizeObserver(
           container,
@@ -121,8 +148,7 @@ export default function initChart(container: any, options: any, data: any, addit
     )
     .catch(handleError);
 
-  // @ts-expect-error ts-migrate(7022) FIXME: 'result' implicitly has type 'any' because it does... Remove this comment to see the full error message
-  const result = {
+  const result: any = {
     initialized: promise.then(() => result),
     setZoomEnabled: createSafeFunction((allowZoom: any) => {
       const layoutUpdates = { dragmode: allowZoom ? "zoom" : false };

@@ -3,8 +3,9 @@ import React, { useMemo, useCallback } from "react";
 import Table from "antd/lib/table";
 import ColorPicker from "@/components/ColorPicker";
 import { EditorPropTypes } from "@/visualizations/prop-types";
-import ColorPalette from "@/visualizations/ColorPalette";
+import { AllColorPalettes } from "@/visualizations/ColorPalette";
 import getChartData from "../getChartData";
+import { Section, Select } from "@/components/visualizations/editor";
 
 function getUniqueValues(chartData: any) {
   const uniqueValuesNames = new Set();
@@ -20,9 +21,10 @@ export default function PieColorsSettings({ options, data, onOptionsChange }: an
   const colors = useMemo(
     () => ({
       Automatic: null,
-      ...ColorPalette,
+      // @ts-expect-error ts-migrate(7053) FIXME: Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      ...AllColorPalettes[options.color_scheme],
     }),
-    []
+    [options.color_scheme]
   );
 
   const series = useMemo(
@@ -59,7 +61,6 @@ export default function PieColorsSettings({ options, data, onOptionsChange }: an
       width: "1%",
       render: (unused: any, item: any) => (
         <ColorPicker
-          // @ts-expect-error ts-migrate(2322) FIXME: Type 'string' is not assignable to type 'never'.
           data-test={`Chart.Series.${item.key}.Color`}
           // @ts-expect-error ts-migrate(2322) FIXME: Type 'boolean' is not assignable to type 'never'.
           interactive
@@ -78,7 +79,24 @@ export default function PieColorsSettings({ options, data, onOptionsChange }: an
     },
   ];
 
-  return <Table showHeader={false} dataSource={series} columns={columns} pagination={false} />;
+  return (
+    <React.Fragment>
+      {/* @ts-expect-error ts-migrate(2745) FIXME: This JSX tag's 'children' prop expects type 'never... Remove this comment to see the full error message */}
+      <Section>
+          <Select
+            label="Color Scheme"
+            defaultValue={options.color_scheme}
+            data-test="ColorScheme"
+            onChange={(val : any) => onOptionsChange({ color_scheme: val })}>
+            {Object.keys(AllColorPalettes).map(option => (
+             // @ts-expect-error ts-migrate(2339) FIXME: Property 'Option' does not exist on type '({ class... Remove this comment to see the full error message
+              <Select.Option data-test={`ColorOption${option}`} key={option} value={option}>{option}</Select.Option>
+            ))}
+          </Select>
+        </Section>
+      <Table showHeader={false} dataSource={series} columns={columns} pagination={false} />
+    </React.Fragment>
+  )
 }
 
 PieColorsSettings.propTypes = EditorPropTypes;

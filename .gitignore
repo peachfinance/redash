@@ -17,6 +17,7 @@ client/dist
 _build
 .vscode
 .env
+.tool-versions
 
 dump.rdb
 
@@ -28,6 +29,7 @@ npm-debug.log
 client/cypress/screenshots
 client/cypress/videos
 
-# Claude Code - local only
+# Peach Finance fork-specific
 .claude/settings.local.json
 .claude/worktrees/
+.terraform/modules/
