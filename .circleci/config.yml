@@ -100,7 +100,7 @@ jobs:
           command: sudo corepack enable && corepack prepare pnpm@10.30.3 --activate
       - run:
           name: Install dependencies
-          command: pnpm install --frozen-lockfile --ignore-scripts
+          command: pnpm install --frozen-lockfile
       - run:
           name: Run App Tests
           command: pnpm test
