@@ -80,9 +80,9 @@ def split_sql_statements(query):
 
         # copy statement object. `copy.deepcopy` fails to do this, so just re-parse it
         st = sqlparse.engine.FilterStack()
-        stmt = next(st.run(sqlparse.text_type(stmt)))
+        stmt = next(st.run(str(stmt)))
 
-        sql = sqlparse.text_type(strip_comments.process(stmt))
+        sql = str(strip_comments.process(stmt))
         return sql.strip() == ""
 
     stack = sqlparse.engine.FilterStack()
@@ -90,7 +90,7 @@ def split_sql_statements(query):
     result = [stmt for stmt in stack.run(query)]
     result = [strip_trailing_comments(stmt) for stmt in result]
     result = [strip_trailing_semicolon(stmt) for stmt in result]
-    result = [sqlparse.text_type(stmt).strip() for stmt in result if not is_empty_statement(stmt)]
+    result = [str(stmt).strip() for stmt in result if not is_empty_statement(stmt)]
 
     if len(result) > 0:
         return result
