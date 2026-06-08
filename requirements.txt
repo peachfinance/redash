@@ -63,6 +63,6 @@ werkzeug==2.3.7
 # Uncomment the requirement for ldap3 if using ldap.
 # It is not included by default because of the GPL license conflict.
 # ldap3==2.2.4
-Authlib==0.15.5
+Authlib==1.6.12
 advocate==1.0.0
 urllib3>=2.6.3 # not directly required, pinned by Snyk to avoid a vulnerability
