@@ -47,7 +47,7 @@ semver==2.8.1
 xlsxwriter==1.2.2
 pystache==0.5.4
 parsedatetime==2.4
-PyJWT==2.4.0
+PyJWT==2.13.0
 cryptography==46.0.7
 simplejson==3.16.0
 ua-parser==0.8.0
