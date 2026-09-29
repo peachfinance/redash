@@ -58,19 +58,9 @@ function stopServer() {
 }
 
 function runCypressCI() {
-  const {
-    GITHUB_REPOSITORY,
-    CYPRESS_OPTIONS, // eslint-disable-line no-unused-vars
-  } = process.env;
-
-  if (GITHUB_REPOSITORY === "getredash/redash" && process.env.CYPRESS_RECORD_KEY) {
-    process.env.CYPRESS_OPTIONS = "--record";
-  }
-
-  execSync(
-    "COMMIT_INFO_MESSAGE=$(git show -s --format=%s) docker compose run --name cypress cypress ./node_modules/.bin/percy exec -t 300 -- ./node_modules/.bin/cypress run $CYPRESS_OPTIONS",
-    { stdio: "inherit" }
-  );
+  // Plain local run: no Percy upload and no Cypress Dashboard recording, so CI
+  // never sends screenshots or commit metadata to third parties.
+  execSync("docker compose run --name cypress cypress ./node_modules/.bin/cypress run", { stdio: "inherit" });
 }
 
 const command = process.argv[2] || "all";

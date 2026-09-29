@@ -34,23 +34,6 @@ def version_check():
     run_version_check()
 
 
-@job("default")
-def subscribe(form):
-    logger.info(
-        "Subscribing to: [security notifications=%s], [newsletter=%s]",
-        form["security_notifications"],
-        form["newsletter"],
-    )
-    data = {
-        "admin_name": form["name"],
-        "admin_email": form["email"],
-        "org_name": form["org_name"],
-        "security_notifications": form["security_notifications"],
-        "newsletter": form["newsletter"],
-    }
-    requests.post("https://version.redash.io/subscribe", json=data)
-
-
 @job("emails")
 def send_mail(to, subject, html, text):
     try:

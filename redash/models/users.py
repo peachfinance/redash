@@ -125,12 +125,21 @@ class User(TimestampMixin, db.Model, BelongsToOrgMixin, UserMixin, PermissionsCh
     def regenerate_api_key(self):
         self.api_key = generate_token(40)
 
+    @staticmethod
+    def default_profile_image_url():
+        path = "images/avatar.svg"
+        try:
+            assets = current_app.extensions["webpack"]["assets"] or {}
+            path = assets.get(path, path)
+            return url_for("static", filename=path)
+        except RuntimeError:
+            # No app context, or no request context and no SERVER_NAME (e.g. an RQ job).
+            return "/static/" + path
+
     def to_dict(self, with_api_key=False):
         profile_image_url = self.profile_image_url
         if self.is_disabled:
-            assets = current_app.extensions["webpack"]["assets"] or {}
-            path = "images/avatar.svg"
-            profile_image_url = url_for("static", filename=assets.get(path, path))
+            profile_image_url = self.default_profile_image_url()
 
         d = {
             "id": self.id,
@@ -166,8 +175,8 @@ class User(TimestampMixin, db.Model, BelongsToOrgMixin, UserMixin, PermissionsCh
         if self._profile_image_url:
             return self._profile_image_url
 
-        email_md5 = hashlib.md5(self.email.lower().encode(), usedforsecurity=False).hexdigest()
-        return "https://www.gravatar.com/avatar/{}?s=40&d=identicon".format(email_md5)
+        # Served locally instead of Gravatar, so no user email hash leaves the deployment.
+        return self.default_profile_image_url()
 
     @property
     def permissions(self):

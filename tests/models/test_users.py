@@ -105,6 +105,29 @@ class TestUserDetail(BaseTestCase):
             self.assertEqual(user_reloaded.active_at, timestamp)
 
 
+class TestUserProfileImageUrl(BaseTestCase):
+    def test_default_avatar_is_served_locally(self):
+        user = self.factory.create_user()
+        with self.app.test_request_context():
+            url = user.profile_image_url
+        self.assertNotIn("gravatar", url)
+        self.assertTrue(url.endswith("images/avatar.svg"), url)
+
+    def test_default_avatar_without_app_context(self):
+        # e.g. a script or job that serializes users with no Flask app context.
+        self.app_ctx.pop()
+        try:
+            url = User.default_profile_image_url()
+        finally:
+            self.app_ctx.push()
+        self.assertEqual("/static/images/avatar.svg", url)
+
+    def test_custom_profile_image_is_kept(self):
+        user = self.factory.create_user()
+        user._profile_image_url = "https://example.com/me.png"
+        self.assertEqual("https://example.com/me.png", user.profile_image_url)
+
+
 class TestUserGetActualUser(BaseTestCase):
     def test_default_user(self):
         user_email = "test@example.com"

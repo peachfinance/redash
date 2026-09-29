@@ -1,0 +1,313 @@
+# CircleCI for the peachfinance/redash fork (upstream v26.3.0).
+#
+# Structure follows peachfinance/redash-config: version 2.1, scripts/setup-gcloud-sdk.sh
+# with GCLOUD_SERVICE_KEY / GOOGLE_PROJECT_ID auth, sha256-pinned tool installs, cached
+# tool dir, junit via store_test_results.
+#
+# Rules:
+# - Test jobs never publish, and never reach upstream Redash or third parties.
+#   Backend and e2e tests run on a Docker network with `internal: true`
+#   (.ci/compose.no-egress.yaml), so any test-time phone-home fails the suite.
+# - Only push-gar (master only) and the nightly trivy-latest get registry creds,
+#   through the restricted `redash-fork-gar` context. The project has no env vars.
+# - Toolchain matches the tag's .github/workflows/ci.yml: node 18, yarn 1.22.22,
+#   python 3.8 for lint only (black/ruff pins), python 3.13 inside the image.
+
+version: 2.1
+
+parameters:
+  nightly-scan:
+    type: boolean
+    default: false
+
+executors:
+  compose:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+  node:
+    docker:
+      - image: cimg/node:18.20.8
+    resource_class: large
+    environment:
+      CYPRESS_INSTALL_BINARY: "0"
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "1"
+  base:
+    docker:
+      - image: cimg/base:2026.06
+
+commands:
+  yarn-install:
+    steps:
+      - restore_cache:
+          keys:
+            - v1-yarn-{{ checksum "yarn.lock" }}-{{ checksum "viz-lib/yarn.lock" }}
+      - run:
+          name: Install yarn 1.22.22 + deps
+          command: |
+            sudo npm install --global --force yarn@1.22.22
+            yarn --frozen-lockfile --network-concurrency 1
+      - save_cache:
+          key: v1-yarn-{{ checksum "yarn.lock" }}-{{ checksum "viz-lib/yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+  install-trivy:
+    steps:
+      - restore_cache:
+          keys:
+            - v1-trivy-0.74.0
+      - run:
+          name: Install trivy (pinned)
+          command: |
+            if [ ! -f ~/.trivy-bin/trivy ]; then
+              mkdir -p ~/.trivy-bin
+              curl -fsSL https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz -o /tmp/trivy.tar.gz
+              echo "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a  /tmp/trivy.tar.gz" | sha256sum -c
+              tar xz -C ~/.trivy-bin -f /tmp/trivy.tar.gz trivy
+            fi
+            echo 'export PATH="$HOME/.trivy-bin:$PATH"' >> "$BASH_ENV"
+      - save_cache:
+          key: v1-trivy-0.74.0
+          paths:
+            - ~/.trivy-bin
+
+jobs:
+  backend-lint:
+    docker:
+      - image: cimg/python:3.8
+    steps:
+      - checkout
+      - run: pip install black==23.1.0 ruff==0.0.287
+      - run: ruff check .
+      - run: black --check .
+
+  backend-unit-tests:
+    executor: compose
+    environment:
+      COMPOSE_FILE: .ci/compose.ci.yaml:.ci/compose.no-egress.yaml
+      COMPOSE_PROJECT_NAME: redash
+      COMPOSE_DOCKER_CLI_BUILD: "1"
+      DOCKER_BUILDKIT: "1"
+    steps:
+      - checkout
+      - run:
+          name: Build
+          command: docker compose build --build-arg install_groups="main,all_ds,dev" --build-arg skip_frontend_build=true
+      - run:
+          name: Start services (no-egress network)
+          command: |
+            docker compose up -d
+            test "$(docker network inspect redash_default --format '{{.Internal}}')" = "true"
+            for i in $(seq 1 30); do docker compose exec -T postgres pg_isready -U postgres && break; sleep 2; done
+      - run: docker compose run --rm postgres psql -h postgres -U postgres -c "create database tests;"
+      - run: docker compose run --rm redash manage ds list_types
+      - run:
+          name: Run backend tests
+          command: docker compose run --name tests redash tests --junitxml=junit.xml --cov-report=xml --cov=redash --cov-config=.coveragerc tests/
+      - run:
+          name: Copy test results
+          when: always
+          command: |
+            mkdir -p /tmp/test-results/backend
+            docker cp tests:/app/junit.xml /tmp/test-results/backend/junit.xml || true
+            docker cp tests:/app/coverage.xml /tmp/test-results/coverage.xml || true
+      - store_test_results:
+          path: /tmp/test-results
+      - store_artifacts:
+          path: /tmp/test-results
+
+  frontend-lint:
+    executor: node
+    steps:
+      - checkout
+      - yarn-install
+      - run: mkdir -p /tmp/test-results/eslint
+      - run: yarn lint:ci
+      - store_test_results:
+          path: /tmp/test-results
+
+  frontend-unit-tests:
+    executor: node
+    steps:
+      - checkout
+      - yarn-install
+      - run:
+          name: App tests
+          command: yarn test
+      - run:
+          name: Visualizations tests
+          command: cd viz-lib && yarn test
+      - run: yarn lint
+
+  frontend-e2e:
+    executor: compose
+    environment:
+      COMPOSE_FILE: .ci/compose.cypress.yaml:.ci/compose.no-egress.yaml
+      COMPOSE_PROJECT_NAME: cypress
+      CYPRESS_INSTALL_BINARY: "0"
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "1"
+    steps:
+      - checkout
+      - run:
+          name: Node 18 + yarn 1.22.22
+          command: |
+            nvm install 18.20.8
+            nvm alias default 18.20.8
+            echo 'nvm use default >/dev/null' >> "$BASH_ENV"
+      - restore_cache:
+          keys:
+            - v1-yarn-machine-{{ checksum "yarn.lock" }}-{{ checksum "viz-lib/yarn.lock" }}
+      - run:
+          name: Install deps
+          command: |
+            npm install --global --force yarn@1.22.22
+            yarn --frozen-lockfile --network-concurrency 1
+      - save_cache:
+          key: v1-yarn-machine-{{ checksum "yarn.lock" }}-{{ checksum "viz-lib/yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+      - run:
+          name: Build server + Cypress images
+          command: yarn cypress build
+      - run:
+          name: Start server (no-egress network)
+          command: |
+            yarn cypress start -- --skip-db-seed
+            test "$(docker network inspect cypress_default --format '{{.Internal}}')" = "true"
+      - run: docker compose run cypress yarn cypress db-seed
+      - run:
+          name: Run Cypress (local only, no Percy / no recording)
+          command: yarn cypress run-ci
+      - run:
+          name: Container logs on failure
+          when: on_fail
+          command: docker compose logs
+      - store_artifacts:
+          path: client/cypress/screenshots
+      - store_artifacts:
+          path: client/cypress/videos
+
+  build-image:
+    executor: base
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Build image (amd64)
+          command: |
+            docker build --platform linux/amd64 \
+              --label org.opencontainers.image.revision=${CIRCLE_SHA1} \
+              --label org.opencontainers.image.source=https://github.com/peachfinance/redash \
+              -t redash:${CIRCLE_SHA1} .
+            mkdir -p /tmp/workspace
+            docker save redash:${CIRCLE_SHA1} | gzip > /tmp/workspace/image.tar.gz
+      - persist_to_workspace:
+          root: /tmp/workspace
+          paths:
+            - image.tar.gz
+
+  trivy-scan:
+    executor: base
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /tmp/workspace
+      - install-trivy
+      - restore_cache:
+          keys:
+            - v1-trivy-db-{{ .Environment.CIRCLE_BUILD_NUM }}
+            - v1-trivy-db-
+      - run:
+          name: Gate on fixable CRITICAL
+          command: trivy image --input /tmp/workspace/image.tar.gz --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress --ignorefile .trivyignore
+      - run:
+          name: CRITICAL+HIGH report (non-gating)
+          when: always
+          command: |
+            mkdir -p /tmp/trivy
+            trivy image --input /tmp/workspace/image.tar.gz --scanners vuln --severity CRITICAL,HIGH --format table --exit-code 0 --no-progress -o /tmp/trivy/trivy-high.txt
+      - save_cache:
+          key: v1-trivy-db-{{ .Environment.CIRCLE_BUILD_NUM }}
+          paths:
+            - ~/.cache/trivy
+      - store_artifacts:
+          path: /tmp/trivy
+
+  push-gar:
+    executor: base
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /tmp/workspace
+      - setup_remote_docker
+      - run:
+          name: Setup GCloud SDK
+          command: |
+            chmod +x scripts/setup-gcloud-sdk.sh
+            scripts/setup-gcloud-sdk.sh
+      - run:
+          name: Tag + push to peach-docker/redash
+          command: |
+            export PATH=${HOME}/google-cloud-sdk/bin:$PATH
+            gcloud auth configure-docker us-docker.pkg.dev --quiet
+            docker load < /tmp/workspace/image.tar.gz
+            VERSION=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+            REPO=us-docker.pkg.dev/peach-finance/peach-docker/redash
+            for tag in "${VERSION}-peach.${CIRCLE_SHA1:0:7}" "${CIRCLE_SHA1}" latest; do
+              docker tag redash:${CIRCLE_SHA1} ${REPO}:${tag}
+              docker push ${REPO}:${tag}
+            done
+
+  trivy-latest:
+    executor: base
+    steps:
+      - checkout
+      - setup_remote_docker
+      - install-trivy
+      - run:
+          name: Setup GCloud SDK
+          command: |
+            chmod +x scripts/setup-gcloud-sdk.sh
+            scripts/setup-gcloud-sdk.sh
+      - run:
+          name: Scan :latest
+          command: |
+            export PATH=${HOME}/google-cloud-sdk/bin:$PATH
+            gcloud auth configure-docker us-docker.pkg.dev --quiet
+            docker pull us-docker.pkg.dev/peach-finance/peach-docker/redash:latest
+            trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress --ignorefile .trivyignore us-docker.pkg.dev/peach-finance/peach-docker/redash:latest
+
+workflows:
+  test-build-scan:
+    when:
+      not: << pipeline.parameters.nightly-scan >>
+    jobs:
+      - backend-lint
+      - backend-unit-tests
+      - frontend-lint
+      - frontend-unit-tests
+      - frontend-e2e
+      - build-image
+      - trivy-scan:
+          requires:
+            - build-image
+      # frontend-e2e is intentionally NOT required yet (non-blocking until stable).
+      - push-gar:
+          context: redash-fork-gar
+          requires:
+            - backend-lint
+            - backend-unit-tests
+            - frontend-lint
+            - frontend-unit-tests
+            - trivy-scan
+          filters:
+            branches:
+              only:
+                - master
+
+  # Runs from a scheduled pipeline trigger that sets nightly-scan=true.
+  nightly-scan:
+    when: << pipeline.parameters.nightly-scan >>
+    jobs:
+      - trivy-latest:
+          context: redash-fork-gar
