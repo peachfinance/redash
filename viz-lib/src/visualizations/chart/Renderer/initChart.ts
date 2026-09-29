@@ -2,11 +2,7 @@ import { isArray, isObject, isString, isFunction, startsWith, reduce, merge, map
 import resizeObserver from "@/services/resizeObserver";
 import { Plotly, prepareData, prepareLayout, updateData, updateAxes, updateChartSize } from "../plotly";
 import { formatSimpleTemplate } from "@/lib/value-format";
-
-const navigateToUrl = (url: string, shouldOpenNewTab: boolean = true) =>
-  shouldOpenNewTab
-    ? window.open(url, "_blank")
-    : window.location.href = url;
+import navigateToUrl from "./navigateToUrl";
 
 function createErrorHandler(errorHandler: any) {
   return (error: any) => {
