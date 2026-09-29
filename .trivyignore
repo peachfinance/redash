@@ -1,0 +1,2 @@
+# Trivy ignore list for the CircleCI trivy-scan / trivy-latest jobs.
+# One CVE ID per line, each with a comment giving the reason and a review date.

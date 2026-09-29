@@ -1,0 +1,7 @@
+# Layered after .ci/compose.ci.yaml or .ci/compose.cypress.yaml via COMPOSE_FILE.
+# Puts every service on an internal-only network: containers can reach each other,
+# but nothing can reach the internet, so any test-time phone-home fails the suite.
+# Image builds are unaffected (they don't use the compose network).
+networks:
+  default:
+    internal: true

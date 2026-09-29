@@ -1,5 +1,4 @@
 client/.tmp/
-client/dist/
 node_modules/
 viz-lib/node_modules/
 .tmp/
@@ -13,3 +12,8 @@ venv/
 /.github/
 /netlify.toml
 /setup/
+/.claude/
+# Local-only secrets and CA certs must never enter the build context. Root-only
+# on purpose: redash/query_runner/files/rds-combined-ca-bundle.pem ships in the image.
+/.env
+/*.pem

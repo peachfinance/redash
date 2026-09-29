@@ -61,7 +61,8 @@ export const config = {
     {
       name: "img",
       displayAs: "image",
-      imageUrlTemplate: "https://raw.githubusercontent.com/linssen/country-flag-icons/master/images/png/{{ @ }}.png",
+      // Served by the Redash server under test, so the e2e run needs no internet access.
+      imageUrlTemplate: "/static/images/avatar.svg?iso={{ @ }}",
       imageTitleTemplate: "ISO: {{ @ }}",
       imageWidth: "30",
       imageHeight: "",
