@@ -1,23 +1,32 @@
 import datetime
 import logging
-import sys
+import socket
 import time
 from base64 import b64decode
 
-import httplib2
-import requests
-
 from redash import settings
-from redash.query_runner import *
-from redash.utils import json_dumps, json_loads
+from redash.query_runner import (
+    TYPE_BOOLEAN,
+    TYPE_DATE,
+    TYPE_DATETIME,
+    TYPE_FLOAT,
+    TYPE_INTEGER,
+    TYPE_STRING,
+    BaseSQLQueryRunner,
+    InterruptException,
+    JobTimeoutException,
+    register,
+)
+from redash.utils import json_loads
 
 logger = logging.getLogger(__name__)
 
 try:
     import apiclient.errors
+    import google.auth
     from apiclient.discovery import build
-    from apiclient.errors import HttpError
-    from oauth2client.service_account import ServiceAccountCredentials
+    from apiclient.errors import HttpError  # noqa: F401
+    from google.oauth2.service_account import Credentials
 
     enabled = True
 except ImportError:
@@ -29,6 +38,8 @@ types_map = {
     "BOOLEAN": TYPE_BOOLEAN,
     "STRING": TYPE_STRING,
     "TIMESTAMP": TYPE_DATETIME,
+    "DATETIME": TYPE_DATETIME,
+    "DATE": TYPE_DATE,
 }
 
 
@@ -52,9 +63,7 @@ def transform_row(row, fields):
     for column_index, cell in enumerate(row["f"]):
         field = fields[column_index]
         if field.get("mode") == "REPEATED":
-            cell_value = [
-                transform_cell(field["type"], item["v"]) for item in cell["v"]
-            ]
+            cell_value = [transform_cell(field["type"], item["v"]) for item in cell["v"]]
         else:
             cell_value = transform_cell(field["type"], cell["v"])
 
@@ -64,7 +73,7 @@ def transform_row(row, fields):
 
 
 def _load_key(filename):
-    f = file(filename, "rb")
+    f = open(filename, "rb")
     try:
         return f.read()
     finally:
@@ -77,7 +86,7 @@ def _get_query_results(jobs, project_id, location, job_id, start_index):
     ).execute()
     logging.debug("query_reply %s", query_reply)
     if not query_reply["jobComplete"]:
-        time.sleep(10)
+        time.sleep(1)
         return _get_query_results(jobs, project_id, location, job_id, start_index)
 
     return query_reply
@@ -89,9 +98,12 @@ def _get_total_bytes_processed_for_resp(bq_response):
     return int(bq_response.get("totalBytesProcessed", "0"))
 
 
-class BigQuery(BaseQueryRunner):
-    should_annotate_query = False
+class BigQuery(BaseSQLQueryRunner):
     noop_query = "SELECT 1"
+
+    def __init__(self, configuration):
+        super().__init__(configuration)
+        self.should_annotate_query = configuration.get("useQueryAnnotation", False)
 
     @classmethod
     def enabled(cls):
@@ -103,7 +115,7 @@ class BigQuery(BaseQueryRunner):
             "type": "object",
             "properties": {
                 "projectId": {"type": "string", "title": "Project ID"},
-                "jsonKeyFile": {"type": "string", "title": "JSON Key File"},
+                "jsonKeyFile": {"type": "string", "title": "JSON Key File (ADC is used if omitted)"},
                 "totalMBytesProcessedLimit": {
                     "type": "number",
                     "title": "Scanned Data Limit (MB)",
@@ -123,8 +135,13 @@ class BigQuery(BaseQueryRunner):
                     "type": "number",
                     "title": "Maximum Billing Tier",
                 },
+                "useQueryAnnotation": {
+                    "type": "boolean",
+                    "title": "Use Query Annotation",
+                    "default": False,
+                },
             },
-            "required": ["jsonKeyFile", "projectId"],
+            "required": ["projectId"],
             "order": [
                 "projectId",
                 "jsonKeyFile",
@@ -134,23 +151,31 @@ class BigQuery(BaseQueryRunner):
                 "totalMBytesProcessedLimit",
                 "maximumBillingTier",
                 "userDefinedFunctionResourceUri",
+                "useQueryAnnotation",
             ],
             "secret": ["jsonKeyFile"],
         }
 
+    def annotate_query(self, query, metadata):
+        # Remove "Job ID" before annotating the query to avoid cache misses
+        metadata = {k: v for k, v in metadata.items() if k != "Job ID"}
+        return super().annotate_query(query, metadata)
+
     def _get_bigquery_service(self):
-        scope = [
+        socket.setdefaulttimeout(settings.BIGQUERY_HTTP_TIMEOUT)
+
+        scopes = [
             "https://www.googleapis.com/auth/bigquery",
             "https://www.googleapis.com/auth/drive",
         ]
 
-        key = json_loads(b64decode(self.configuration["jsonKeyFile"]))
+        try:
+            key = json_loads(b64decode(self.configuration["jsonKeyFile"]))
+            creds = Credentials.from_service_account_info(key, scopes=scopes)
+        except KeyError:
+            creds = google.auth.default(scopes=scopes)[0]
 
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(key, scope)
-        http = httplib2.Http(timeout=settings.BIGQUERY_HTTP_TIMEOUT)
-        http = creds.authorize(http)
-
-        return build("bigquery", "v2", http=http, cache_discovery=False)
+        return build("bigquery", "v2", credentials=creds, cache_discovery=False)
 
     def _get_project_id(self):
         return self.configuration["projectId"]
@@ -180,17 +205,13 @@ class BigQuery(BaseQueryRunner):
             job_data["configuration"]["query"]["useLegacySql"] = False
 
         if self.configuration.get("userDefinedFunctionResourceUri"):
-            resource_uris = self.configuration["userDefinedFunctionResourceUri"].split(
-                ","
-            )
+            resource_uris = self.configuration["userDefinedFunctionResourceUri"].split(",")
             job_data["configuration"]["query"]["userDefinedFunctionResources"] = [
                 {"resourceUri": resource_uri} for resource_uri in resource_uris
             ]
 
         if "maximumBillingTier" in self.configuration:
-            job_data["configuration"]["query"][
-                "maximumBillingTier"
-            ] = self.configuration["maximumBillingTier"]
+            job_data["configuration"]["query"]["maximumBillingTier"] = self.configuration["maximumBillingTier"]
 
         return job_data
 
@@ -199,11 +220,12 @@ class BigQuery(BaseQueryRunner):
         job_data = self._get_job_data(query)
         insert_response = jobs.insert(projectId=project_id, body=job_data).execute()
         self.current_job_id = insert_response["jobReference"]["jobId"]
+        self.current_job_location = insert_response["jobReference"]["location"]
         current_row = 0
         query_reply = _get_query_results(
             jobs,
             project_id=project_id,
-            location=self._get_location(),
+            location=self.current_job_location,
             job_id=self.current_job_id,
             start_index=current_row,
         )
@@ -220,12 +242,10 @@ class BigQuery(BaseQueryRunner):
 
             query_result_request = {
                 "projectId": project_id,
-                "jobId": query_reply["jobReference"]["jobId"],
+                "jobId": self.current_job_id,
                 "startIndex": current_row,
+                "location": self.current_job_location,
             }
-
-            if self._get_location():
-                query_result_request["location"] = self._get_location()
 
             query_reply = jobs.getQueryResults(**query_result_request).execute()
 
@@ -233,9 +253,7 @@ class BigQuery(BaseQueryRunner):
             {
                 "name": f["name"],
                 "friendly_name": f["name"],
-                "type": "string"
-                if f.get("mode") == "REPEATED"
-                else types_map.get(f["type"], "string"),
+                "type": "string" if f.get("mode") == "REPEATED" else types_map.get(f["type"], "string"),
             }
             for f in query_reply["schema"]["fields"]
         ]
@@ -273,12 +291,12 @@ class BigQuery(BaseQueryRunner):
 
         datasets = service.datasets().list(projectId=project_id).execute()
         result.extend(datasets.get("datasets", []))
-        nextPageToken = datasets.get('nextPageToken', None)
+        nextPageToken = datasets.get("nextPageToken", None)
 
         while nextPageToken is not None:
             datasets = service.datasets().list(projectId=project_id, pageToken=nextPageToken).execute()
             result.extend(datasets.get("datasets", []))
-            nextPageToken = datasets.get('nextPageToken', None)
+            nextPageToken = datasets.get("nextPageToken", None)
 
         return result
 
@@ -290,29 +308,70 @@ class BigQuery(BaseQueryRunner):
         datasets = self._get_project_datasets(project_id)
 
         query_base = """
-        SELECT table_schema, table_name, column_name
-        FROM `{dataset_id}`.INFORMATION_SCHEMA.COLUMNS
+        SELECT table_schema, table_name, field_path, data_type, description
+        FROM `{dataset_id}`.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS
         WHERE table_schema NOT IN ('information_schema')
         """
 
+        table_query_base = """
+        SELECT table_schema, table_name, JSON_VALUE(option_value) as table_description
+        FROM `{dataset_id}`.INFORMATION_SCHEMA.TABLE_OPTIONS
+        WHERE table_schema NOT IN ('information_schema')
+        AND option_name = 'description'
+        """
+
+        location_dataset_ids = {}
         schema = {}
-        queries = []
         for dataset in datasets:
             dataset_id = dataset["datasetReference"]["datasetId"]
-            query = query_base.format(dataset_id=dataset_id)
-            queries.append(query)
+            location = dataset["location"]
+            if self._get_location() and location != self._get_location():
+                logger.debug("dataset location is different: %s", location)
+                continue
 
-        query = '\nUNION ALL\n'.join(queries)
-        results, error = self.run_query(query, None)
-        if error is not None:
-            self._handle_run_query_error(error)
+            if location not in location_dataset_ids:
+                location_dataset_ids[location] = []
+            location_dataset_ids[location].append(dataset_id)
 
-        results = json_loads(results)
-        for row in results["rows"]:
-            table_name = "{0}.{1}".format(row["table_schema"], row["table_name"])
-            if table_name not in schema:
-                schema[table_name] = {"name": table_name, "columns": []}
-            schema[table_name]["columns"].append(row["column_name"])
+        for location, datasets in location_dataset_ids.items():
+            queries = []
+            for dataset_id in datasets:
+                query = query_base.format(dataset_id=dataset_id)
+                queries.append(query)
+
+            query = "\nUNION ALL\n".join(queries)
+            results, error = self.run_query(query, None)
+            if error is not None:
+                self._handle_run_query_error(error)
+
+            for row in results["rows"]:
+                table_name = "{0}.{1}".format(row["table_schema"], row["table_name"])
+                if table_name not in schema:
+                    schema[table_name] = {"name": table_name, "columns": []}
+                schema[table_name]["columns"].append(
+                    {
+                        "name": row["field_path"],
+                        "type": row["data_type"],
+                        "description": row["description"],
+                    }
+                )
+
+            table_queries = []
+            for dataset_id in datasets:
+                table_query = table_query_base.format(dataset_id=dataset_id)
+                table_queries.append(table_query)
+
+            table_query = "\nUNION ALL\n".join(table_queries)
+            results, error = self.run_query(table_query, None)
+            if error is not None:
+                self._handle_run_query_error(error)
+
+            for row in results["rows"]:
+                table_name = "{0}.{1}".format(row["table_schema"], row["table_name"])
+                if table_name not in schema:
+                    schema[table_name] = {"name": table_name, "columns": []}
+                if "table_description" in row:
+                    schema[table_name]["description"] = row["table_description"]
 
         return list(schema.values())
 
@@ -325,22 +384,18 @@ class BigQuery(BaseQueryRunner):
         try:
             if "totalMBytesProcessedLimit" in self.configuration:
                 limitMB = self.configuration["totalMBytesProcessedLimit"]
-                processedMB = (
-                    self._get_total_bytes_processed(jobs, query) / 1000.0 / 1000.0
-                )
+                processedMB = self._get_total_bytes_processed(jobs, query) / 1000.0 / 1000.0
                 if limitMB < processedMB:
                     return (
                         None,
-                        "Larger than %d MBytes will be processed (%f MBytes)"
-                        % (limitMB, processedMB),
+                        "Larger than %d MBytes will be processed (%f MBytes)" % (limitMB, processedMB),
                     )
 
             data = self._get_query_result(jobs, query)
             error = None
 
-            json_data = json_dumps(data, ignore_nan=True)
         except apiclient.errors.HttpError as e:
-            json_data = None
+            data = None
             if e.resp.status in [400, 404]:
                 error = json_loads(e.content)["error"]["message"]
             else:
@@ -350,12 +405,12 @@ class BigQuery(BaseQueryRunner):
                 self._get_bigquery_service().jobs().cancel(
                     projectId=self._get_project_id(),
                     jobId=self.current_job_id,
-                    location=self._get_location(),
+                    location=self.current_job_location,
                 ).execute()
 
             raise
 
-        return json_data, error
+        return data, error
 
 
 register(BigQuery)

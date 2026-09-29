@@ -3,7 +3,7 @@
 const webpack = require("webpack");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const WebpackBuildNotifierPlugin = require("webpack-build-notifier");
-const ManifestPlugin = require("webpack-manifest-plugin");
+const { WebpackManifestPlugin } = require("webpack-manifest-plugin");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const LessPluginAutoPrefix = require("less-plugin-autoprefix");
@@ -34,7 +34,7 @@ const isDevelopment = !isProduction;
 const isHotReloadingEnabled =
   isDevelopment && process.env.HOT_RELOAD === "true";
 
-const redashBackend = process.env.REDASH_BACKEND || "http://localhost:5000";
+const redashBackend = process.env.REDASH_BACKEND || "http://localhost:5001";
 const baseHref = CONFIG.baseHref || "/";
 const staticPath = CONFIG.staticPath || "/static/";
 const htmlTitle = CONFIG.title || "Redash";
@@ -75,12 +75,22 @@ const config = {
     filename: isProduction ? "[name].[chunkhash].js" : "[name].js",
     publicPath: staticPath
   },
+  node: {
+  },
   resolve: {
     symlinks: false,
     extensions: [".js", ".jsx", ".ts", ".tsx"],
     alias: {
       "@": appPath,
       extensions: extensionPath
+    },
+    fallback: {
+      fs: false,
+      url: require.resolve("url/"),
+      stream: require.resolve("stream-browserify"),
+      assert: require.resolve("assert/"),
+      util: require.resolve("util/"),
+      process: require.resolve("process/browser"),
     }
   },
   plugins: [
@@ -105,18 +115,26 @@ const config = {
       new MiniCssExtractPlugin({
         filename: "[name].[chunkhash].css"
       }),
-    new ManifestPlugin({
+    new WebpackManifestPlugin({
       fileName: "asset-manifest.json",
       publicPath: ""
     }),
-    new CopyWebpackPlugin([
-      { from: "client/app/assets/robots.txt" },
-      { from: "client/app/unsupported.html" },
-      { from: "client/app/unsupportedRedirect.js" },
-      { from: "client/app/assets/css/*.css", to: "styles/", flatten: true },
-      { from: "client/app/assets/fonts", to: "fonts/" }
-    ]),
-    isHotReloadingEnabled && new ReactRefreshWebpackPlugin({ overlay: false })
+    new CopyWebpackPlugin({
+      patterns: [
+        { from: "client/app/assets/robots.txt" },
+        { from: "client/app/unsupported.html" },
+        { from: "client/app/unsupportedRedirect.js" },
+        { from: "client/app/assets/css/*.css", to: "styles/", flatten: true },
+        { from: "client/app/assets/fonts", to: "fonts/" }
+      ],
+    }),
+    isHotReloadingEnabled && new ReactRefreshWebpackPlugin({ overlay: false }),
+    new webpack.ProvidePlugin({
+      // Make a global `process` variable that points to the `process` package,
+      // because the `util` package expects there to be a global variable named `process`.
+      // Thanks to https://stackoverflow.com/a/65018686/14239942
+      process: 'process/browser'
+    })
   ].filter(Boolean),
   optimization: {
     splitChunks: {
@@ -127,6 +145,17 @@ const config = {
   },
   module: {
     rules: [
+      {
+        test: /\.js$/,
+        enforce: "pre",
+        use: ["source-map-loader"],
+        resolve: {
+          fullySpecified: false
+        },
+        exclude: [
+          /node_modules\/@plotly\/mapbox-gl/,
+        ],
+      },
       {
         test: /\.(t|j)sx?$/,
         exclude: /node_modules/,
@@ -158,10 +187,7 @@ const config = {
             loader: isProduction ? MiniCssExtractPlugin.loader : "style-loader"
           },
           {
-            loader: "css-loader",
-            options: {
-              minimize: process.env.NODE_ENV === "production"
-            }
+            loader: "css-loader"
           }
         ]
       },
@@ -172,10 +198,7 @@ const config = {
             loader: isProduction ? MiniCssExtractPlugin.loader : "style-loader"
           },
           {
-            loader: "css-loader",
-            options: {
-              minimize: isProduction
-            }
+            loader: "css-loader"
           },
           {
             loader: "less-loader",
@@ -228,7 +251,7 @@ const config = {
       }
     ]
   },
-  devtool: isProduction ? "source-map" : "cheap-eval-module-source-map",
+  devtool: isProduction ? "source-map" : "eval-cheap-module-source-map",
   stats: {
     children: false,
     modules: false,
@@ -238,14 +261,18 @@ const config = {
     ignored: /\.sw.$/
   },
   devServer: {
-    inline: true,
-    index: "/static/index.html",
+    devMiddleware: {
+      index: "/static/index.html",
+      publicPath: staticPath,
+      stats: {
+        modules: false,
+        chunkModules: false
+      },
+    },
     historyApiFallback: {
       index: "/static/index.html",
       rewrites: [{ from: /./, to: "/static/index.html" }]
     },
-    contentBase: false,
-    publicPath: staticPath,
     proxy: [
       {
         context: [
@@ -271,10 +298,6 @@ const config = {
         secure: false
       }
     ],
-    stats: {
-      modules: false,
-      chunkModules: false
-    },
     hot: isHotReloadingEnabled
   },
   performance: {
